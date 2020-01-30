@@ -1,0 +1,347 @@
+from selenium import webdriver
+from bs4 import BeautifulSoup as bs
+import lxml
+import time
+import os
+import sys
+from datetime import datetime
+from collections import deque
+import threading
+import json
+
+A = 0
+B = 0
+
+b2l = {}
+
+nextDay = 0
+squ = deque()
+
+sch = {}
+
+refresh_time = 60
+check_sign_time = 600
+resign_time = 21700
+
+
+comparator = datetime.now()
+
+def log(s):
+    os.system("echo " + str(s) + ">> log.txt")
+geckodriver = "geckodriver.exe"
+
+def xpath_soup(element):
+    # type: (typing.Union[bs4.element.Tag, bs4.element.NavigableString]) -> str
+    """
+    Generate xpath from BeautifulSoup4 element.
+    :param element: BeautifulSoup4 element.
+    :type element: bs4.element.Tag or bs4.element.NavigableString
+    :return: xpath as string
+    :rtype: str
+    Usage
+    -----
+    >>> import bs4
+    >>> html = (
+    ...     '<html><head><title>title</title></head>'
+    ...     '<body><p>p <i>1</i></p><p>p <i>2</i></p></body></html>'
+    ...     )
+    >>> soup = bs4.BeautifulSoup(html, 'html.parser')
+    >>> xpath_soup(soup.html.body.p.i)
+    '/html/body/p[1]/i'
+    >>> import bs4
+    >>> xml = '<doc><elm/><elm/></doc>'
+    >>> soup = bs4.BeautifulSoup(xml, 'lxml-xml')
+    >>> xpath_soup(soup.doc.elm.next_sibling)
+    '/doc/elm[2]'
+    """
+    components = []
+    child = element if element.name else element.parent
+    for parent in child.parents:  # type: bs4.element.Tag
+        siblings = parent.find_all(child.name, recursive=False)
+        components.append(
+            child.name if 1 == len(siblings) else '%s[%d]' % (
+                child.name,
+                next(i for i, s in enumerate(siblings, 1) if s is child)
+                )
+            )
+        child = parent
+    components.reverse()
+    return '/%s' % '/'.join(components)
+
+path = os.path.abspath(geckodriver)
+options = webdriver.FirefoxOptions()
+options.add_argument('-headless')
+browser = webdriver.Firefox(executable_path = path, firefox_options = options)
+browser.get("https://ion.tjhsst.edu")
+soup = bs(browser.page_source, "lxml")
+
+def assembleSchedule():
+    global comparator
+    global squ
+    # sch["Wed"] = {}
+    # sch["Wed"]['A'] = 751
+    # sch["Wed"]['B'] = 2975
+    # sch["Fri"] = {}
+    # sch["Fri"]['A'] = 751
+    # sch["Fri"]['B'] = 2975
+    with open("schedule.json", "r") as f:
+        sch = json.load(f)
+    day = str(comparator.strftime("%a")).strip()
+    squ = deque()
+    squ.append((sch[day]['A'], 'A'))
+    squ.append((sch[day]['B'], 'B'))
+
+def refreshSchedule():
+    global comparator
+    global squ
+    day = str(comparator.strftime("%a")).strip()
+    squ = deque()
+    squ.append((sch[day]['A'], 'A'))
+    squ.append((sch[day]['B'], 'B'))
+
+def authenticate():
+    global browser
+    global soup
+
+    auth = ["",""]
+    fin = open("pass", "r")
+    auth[0] = fin.readline()
+    auth[1] = fin.readline()
+    fin.close()
+
+    userbox = browser.find_element_by_id("id_username")
+    passbox = browser.find_element_by_id("id_password")
+    loginbutton = browser.find_element_by_xpath("/html/body/div[1]/div/div[1]/form/input[4]")
+
+    userbox.send_keys(auth[0])
+    passbox.send_keys(auth[1])
+    loginbutton.click()
+
+    blockflag = False
+
+    while(not blockflag):
+        try:
+            blockbutton = browser.find_element_by_xpath("/html/body/div[3]/div[1]/div[1]/div[1]/div/a")
+            blockflag = True
+        except:
+            log("couldnt get block button")
+            time.sleep(1)
+
+    blockbutton.click()
+
+    time.sleep(5)
+
+def get_to_schedule():
+    global nextDay
+    global soup
+    global browser
+    global comparator
+
+    soup = bs(browser.page_source, "lxml")
+
+    soup = bs(str(soup.find(class_= "days-container")), "lxml")
+
+    blocks = soup.find_all('li')
+
+    janFlag = False
+    nextDay = blocks[0]
+    for days in blocks:
+        date = bs(str(days), "lxml")
+        day =  date.find(class_="day-title").string.strip()
+        day += " 2020"
+        comparator = datetime.strptime(day, "%A, %b %d %Y")
+        month = str(comparator.strftime("%b"))
+        #print(month)
+        if(month.strip() == "Jan"):
+            janFlag = True
+        if(not janFlag):
+            continue
+        if(datetime.now()>comparator):
+            continue
+        nextDay = days
+        break
+
+def signup(ids, blck):
+    global browser
+    global soup
+    global nextDay
+
+    blksL = list(map(lambda n : list(n.find(class_="block-letter").stripped_strings)[0], nextDay.find_all("a")))
+
+    blksl = list(map(lambda n : "https://ion.tjhsst.edu" + n["href"].strip(), nextDay.find_all("a")))
+
+    b2l = dict(zip(blksL,blksl))
+
+    browser.get(b2l[blck])
+
+    soup = bs(browser.page_source, "lxml")
+
+    activityb = soup.find("li",{"data-activity-id": str(ids)})
+
+    acb = browser.find_element_by_xpath(xpath_soup(activityb))
+    acb.click()
+    time.sleep(1)
+
+    gotit = False
+
+    try:
+        browser.find_element_by_id("signup-button").click()
+        time.sleep(5)
+        soup = bs(browser.page_source, "lxml")
+        if("Success" in soup.find("strong").string.strip()):
+            gotit = True
+    except:
+        try:
+            gotit = "signed up for this activity" in soup.find("strong").string.strip()
+            print("signed up for this activity" in soup.find("strong").string.strip())
+        except:
+            print("Threw Exception")
+            gotit = False
+    return gotit
+
+def restart_browser():
+    global browser
+    global soup
+    global browser
+    browser.quit()
+    path = os.path.abspath(geckodriver)
+    options = webdriver.FirefoxOptions()
+    options.add_argument('-headless')
+    browser = webdriver.Firefox(executable_path = path, firefox_options = options)
+    browser.get("https://ion.tjhsst.edu")
+    soup = bs(browser.page_source, "lxml")
+
+authenticate()
+get_to_schedule()
+assembleSchedule()
+
+deltatime2 = 0
+deltatime = 0
+deltatime3 = 0
+t01 = 0
+t02 = 0
+t03 = 0
+def main():
+    global sch
+    global TimerThread
+    global deltatime2
+    global deltatime
+    global deltatime3
+    global t01
+    global t02
+    global t03
+    global squ
+    global refresh_time
+    global check_sign_time
+    global resign_time
+    while(True):
+        print("awaiting input")
+        line = input()
+        try:
+            if "restart" in line:
+                t02 += 400000
+                print("restarted")
+            if "change" in line:
+                print("Which Day")
+                day = input()
+                print("Which Block")
+                block = input()
+                print("Activity Id")
+                actid = int(input())
+                sch[day.strip()][block.strip()] = actid
+                refreshSchedule()
+                t02 += 40000
+                print("done")
+            if "stop" in line:
+                browser.quit()
+                sys.exit()
+            if "refresh" in line:
+                t03 += 600
+            if "check" in line:
+                t01 += 6000
+                print("checked")
+            if "list" in line:
+                print(squ)
+            if "sch" in line:
+                print(sch)
+            if "deltatime" in line:
+                print(deltatime)
+                print(deltatime2)
+                print(deltatime3)
+            if "t0s" in line:
+                print(t01)
+                print(t02)
+                print(t03)
+            if "refreshvar" in line:
+                print("int")
+                refresh_time = int(input())
+            if "signvar" in line:
+                print("int")
+                check_sign_time = int(input())
+            if "resigvar" in line:
+                print("int")
+                resign_time = int(input())
+        except Exception as e:
+            print(repr(e))
+            print("try another command")
+
+
+def Timer():
+    global squ
+    global nextDay
+    global deltatime2
+    global deltatime
+    global deltatime3
+    global t01
+    global t02
+    global t03
+    global refresh_time
+    global check_sign_time
+    global resign_time
+    print("Timer Thread")
+    t01 = time.time()
+    t02 = time.time()
+    t03 = time.time()
+    while(True):
+        t = time.time()
+        deltatime = abs(t-t01)
+        deltatime2 = abs(t-t02)
+        deltatime3 = abs(t-t03)
+        
+        if deltatime3 >= refresh_time:
+            browser.refresh()
+            t03 = time.time()
+        
+        if deltatime >= check_sign_time:
+            holder = deque()
+            while squ:
+                tem = squ.popleft()
+                if not signup(tem[0], tem[1]):
+                    holder.append(tem)
+            while holder:
+                squ.append(holder.popleft())
+            browser.refresh()
+            t01 = time.time() 
+
+        if deltatime2 >= resign_time:
+            restart_browser()
+            authenticate()
+            get_to_schedule()
+            refreshSchedule()
+            t02 = time.time()
+        time.sleep(1)
+
+TimerThread = threading.Thread(target=main)
+TimerThread.start()
+
+while True:
+    try:
+        Timer()
+    except:
+        print("Something Went Wrong, Attempting to restart")
+        authenticate()
+        get_to_schedule()
+        assembleSchedule()
+
+
+

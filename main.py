@@ -70,7 +70,7 @@ def xpath_soup(element):
 
 path = os.path.abspath(geckodriver)
 options = webdriver.FirefoxOptions()
-options.add_argument('-headless')
+#options.add_argument('-headless')
 browser = webdriver.Firefox(executable_path = path, firefox_options = options)
 browser.get("https://ion.tjhsst.edu")
 soup = bs(browser.page_source, "lxml")
@@ -203,7 +203,7 @@ def signupi(ids, blck):
 
 def signup(ids, block):
     try:
-        return signup(ids, block)
+        return signupi(ids, block)
     except Exception as e:
         print(repr(e))
         return False

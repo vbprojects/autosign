@@ -1,0 +1,2 @@
+#!/bin/bash
+TerminalImageViewer/src/main/cpp/tiv $@

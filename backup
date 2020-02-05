@@ -204,8 +204,7 @@ def signupi(ids, blck):
 def signup(ids, block):
     try:
         return signup(ids, block)
-    except Exception as e:
-        print(repr(e))
+    except:
         return False
 
 def restart_browser():
